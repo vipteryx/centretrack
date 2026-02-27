@@ -27,7 +27,9 @@ jobs:
       
       - name: Install dependencies
         run: |
-          pip install requests beautifulsoup4
+          pip install playwright
+          playwright install chromium
+          playwright install-deps chromium
       
       - name: Create data directory
         run: mkdir -p data
