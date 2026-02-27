@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vancouver Community Centres - Hours</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }
+        #map {
+            height: 100vh;
+            width: 100vw;
+        }
+        .time-marker {
+            background: white;
+            padding: 4px 8px;
+            border-radius: 4px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+            font-size: 14px;
+            font-weight: 600;
+            white-space: nowrap;
+            text-align: center;
+        }
+        #status {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: white;
+            padding: 10px 15px;
+            border-radius: 4px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+            z-index: 1000;
+            font-size: 12px;
+            max-width: 250px;
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <div id="status">Loading...</div>
+
+    <script>
+        const map = L.map('map').setView([49.2827, -123.1207], 12);
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors'
+        }).addTo(map);
+
+        const centreLocations = {
+            "Britannia": { lat: 49.2755, lng: -123.0707 },
+            "Champlain Heights": { lat: 49.2154, lng: -123.0339 },
+            "Coal Harbour": { lat: 49.2880, lng: -123.1240 },
+            "Creekside": { lat: 49.2728, lng: -123.1090 },
+            "Douglas Park": { lat: 49.2483, lng: -123.1470 },
+            "Dunbar": { lat: 49.2398, lng: -123.1850 },
+            "False Creek": { lat: 49.2693, lng: -123.1382 },
+            "Hastings": { lat: 49.2808, lng: -123.0310 },
+            "Hillcrest": { lat: 49.2500, lng: -123.1003 },
+            "Kensington": { lat: 49.2283, lng: -123.0489 },
+            "Kerrisdale": { lat: 49.2330, lng: -123.1590 },
+            "Killarney": { lat: 49.2237, lng: -123.0458 },
+            "Kitsilano": { lat: 49.2685, lng: -123.1620 },
+            "Marpole-Oakridge": { lat: 49.2127, lng: -123.1183 },
+            "Mount Pleasant": { lat: 49.2625, lng: -123.1015 },
+            "Renfrew Park": { lat: 49.2522, lng: -123.0388 },
+            "Roundhouse": { lat: 49.2747, lng: -123.1220 },
+            "Strathcona": { lat: 49.2753, lng: -123.0858 },
+            "Sunset": { lat: 49.2393, lng: -123.1047 },
+            "Thunderbird": { lat: 49.2533, lng: -123.0342 },
+            "Trout Lake": { lat: 49.2553, lng: -123.0588 },
+            "West End": { lat: 49.2877, lng: -123.1408 },
+            "West Point Grey": { lat: 49.2698, lng: -123.2047 }
+        };
+
+        let markers = [];
+        let hoursData = {};
+
+        async function fetchHoursData() {
+            try {
+                document.getElementById('status').textContent = 'Loading hours...';
+                
+                // Replace with your GitHub username and repo name
+                const dataUrl = 'https://raw.githubusercontent.com/YOUR-USERNAME/YOUR-REPO/main/data/hours.json';
+                
+                const response = await fetch(dataUrl);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                console.log('Loaded data:', data);
+                
+                const now = new Date();
+                const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+                const today = days[now.getDay()];
+                
+                const todayHours = {};
+                for (const [name, hours] of Object.entries(data.centres)) {
+                    todayHours[name] = hours[today] || 'No data';
+                }
+                
+                const lastUpdated = new Date(data.lastUpdated);
+                document.getElementById('status').textContent = `Updated: ${lastUpdated.toLocaleString()}`;
+                
+                return todayHours;
+            } catch (error) {
+                console.error('Fetch error:', error);
+                document.getElementById('status').textContent = 'Error: Update YOUR-USERNAME/YOUR-REPO in code';
+                return {};
+            }
+        }
+
+        function parseClosingTime(hoursStr) {
+            if (!hoursStr || hoursStr.toLowerCase().includes('closed')) {
+                return null;
+            }
+            
+            const match = hoursStr.match(/(\d+):?(\d*)([ap]m)\s*-\s*(\d+):?(\d*)([ap]m)/i);
+            if (!match) {
+                return null;
+            }
+            
+            let endHour = parseInt(match[4]);
+            const endMin = match[5] ? parseInt(match[5]) : 0;
+            const endPeriod = match[6].toLowerCase();
+            
+            if (endPeriod === 'pm' && endHour !== 12) endHour += 12;
+            if (endPeriod === 'am' && endHour === 12) endHour = 0;
+            
+            return { hour: endHour, min: endMin };
+        }
+
+        function updateDisplay() {
+            markers.forEach(m => map.removeLayer(m));
+            markers = [];
+
+            const now = new Date();
+            let foundCount = 0;
+
+            Object.keys(centreLocations).forEach(name => {
+                const location = centreLocations[name];
+                const hoursStr = hoursData[name];
+                
+                let displayText;
+
+                if (!hoursStr || hoursStr === 'No data') {
+                    displayText = 'No data';
+                } else {
+                    foundCount++;
+                    const closingTime = parseClosingTime(hoursStr);
+
+                    if (!closingTime) {
+                        displayText = 'Closed';
+                    } else {
+                        const closeDate = new Date();
+                        closeDate.setHours(closingTime.hour, closingTime.min, 0, 0);
+
+                        const diffMs = closeDate - now;
+
+                        if (diffMs < 0) {
+                            displayText = 'Closed';
+                        } else {
+                            const hours = Math.floor(diffMs / (1000 * 60 * 60));
+                            const mins = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+
+                            const hour12 = closingTime.hour > 12 ? closingTime.hour - 12 : closingTime.hour;
+                            const period = closingTime.hour >= 12 ? 'pm' : 'am';
+                            const closeTimeStr = closingTime.min === 0 
+                                ? `${hour12}${period}` 
+                                : `${hour12}:${closingTime.min.toString().padStart(2, '0')}${period}`;
+
+                            displayText = `${closeTimeStr} - ${hours}:${mins.toString().padStart(2, '0')}`;
+                        }
+                    }
+                }
+
+                const marker = L.marker([location.lat, location.lng], {
+                    icon: L.divIcon({
+                        className: 'time-marker',
+                        html: displayText,
+                        iconSize: null,
+                        iconAnchor: [0, 0]
+                    })
+                }).addTo(map);
+
+                markers.push(marker);
+            });
+        }
+
+        async function init() {
+            hoursData = await fetchHoursData();
+            
+            if (Object.keys(hoursData).length > 0) {
+                updateDisplay();
+                setInterval(updateDisplay, 1000);
+            }
+        }
+
+        init();
+    </script>
+</body>
+</html>
